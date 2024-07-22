@@ -1,0 +1,47 @@
+version: 3
+
+tasks:
+
+  generate:
+    desc: Regenerate the GraphQL client via fezzik. Runs in Docker because fezzik's vendored golang.org/x/tools is incompatible with Go 1.22+ on the host.
+    sources:
+      - github/githubclient/queries.graphql
+      - github/githubclient/github.schema.graphql
+      - github/githubclient/fezzik.yaml
+    generates:
+      - github/githubclient/gen/genclient/*.go
+    cmd: docker run --rm -v {{.ROOT_DIR}}:/work -w /work/github/githubclient golang:1.21 go run github.com/inigolabs/fezzik --config fezzik.yaml
+
+  build:
+    deps:
+      - generate
+    sources:
+      - cmd/**
+      - config/**
+      - git/**
+      - github/**
+      - pretty/**
+      - spr/**
+      - terminal/**
+      - tools/**
+      - .goreleaser.yml
+    cmd: goreleaser --snapshot --skip=publish --clean
+    generates:
+      - dist/**
+
+  backup:
+    vars:
+      DATE: '{{now | date "2006-01-02T15-04-05"}}'
+    cmds:
+      - mkdir -p ~/.bin/.backups/spr/{{.DATE}}
+      - cp ~/.bin/git-spr ~/.bin/.backups/spr/{{.DATE}}/
+      - cp ~/.bin/git-amend ~/.bin/.backups/spr/{{.DATE}}/
+      - cp ~/.bin/spr_reword_helper ~/.bin/.backups/spr/{{.DATE}}/
+
+  install:
+    deps:
+      - build
+    cmds:
+      - cp dist/spr_darwin_arm64_v8.0/git-spr ~/.bin/
+      - cp dist/amend_darwin_arm64_v8.0/git-amend ~/.bin/
+      - cp dist/reword_darwin_arm64_v8.0/spr_reword_helper ~/.bin/
