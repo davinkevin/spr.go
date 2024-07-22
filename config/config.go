@@ -39,8 +39,9 @@ type RepoConfig struct {
 
 	ForceFetchTags bool `default:"false" yaml:"forceFetchTags"`
 
-	ShowPrTitlesInStack    bool `default:"false" yaml:"showPrTitlesInStack"`
-	BranchPushIndividually bool `default:"false" yaml:"branchPushIndividually"`
+	ShowPrTitlesInStack    bool   `default:"false" yaml:"showPrTitlesInStack"`
+	BranchPushIndividually bool   `default:"false" yaml:"branchPushIndividually"`
+	BranchPrefix           string `yaml:"branchPrefix,omitempty"`
 }
 
 type UserConfig struct {
@@ -50,12 +51,13 @@ type UserConfig struct {
 	StatusBitsHeader bool `default:"true" yaml:"statusBitsHeader"`
 	StatusBitsEmojis bool `default:"true" yaml:"statusBitsEmojis"`
 
-	CreateDraftPRs       bool `default:"false" yaml:"createDraftPRs"`
-	PreserveTitleAndBody bool `default:"false" yaml:"preserveTitleAndBody"`
-	NoRebase             bool `default:"false" yaml:"noRebase"`
+	CreateDraftPRs       bool   `default:"false" yaml:"createDraftPRs"`
+	PreserveTitleAndBody bool   `default:"false" yaml:"preserveTitleAndBody"`
+	NoRebase             bool   `default:"false" yaml:"noRebase"`
 	DeleteMergedBranches bool `default:"false" yaml:"deleteMergedBranches"`
 	ShortPRLink          bool `default:"false" yaml:"shortPRLink"`
 	ShowCommitID         bool `default:"false" yaml:"showCommitID"`
+	BranchPrefix         string `default:"spr" yaml:"branchPrefix"`
 }
 
 type InternalState struct {
@@ -99,6 +101,14 @@ func (c *Config) Normalize() {
 	if c.Repo != nil && c.Repo.PRTemplatePath != "" {
 		c.Repo.PRTemplateType = "custom"
 	}
+}
+
+func (c Config) BranchPrefix() string {
+	prefix := c.User.BranchPrefix
+	if c.Repo != nil && c.Repo.BranchPrefix != "" {
+		prefix = c.Repo.BranchPrefix
+	}
+	return strings.TrimRight(prefix, "/")
 }
 
 func (c Config) MergeMethod() (genclient.PullRequestMergeMethod, error) {
