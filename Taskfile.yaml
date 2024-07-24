@@ -16,14 +16,14 @@ tasks:
     deps:
       - generate
     sources:
-      - cmd/**
-      - config/**
-      - git/**
-      - github/**
-      - pretty/**
-      - spr/**
-      - terminal/**
-      - tools/**
+      - cmd/**/*
+      - config/**/*
+      - git/**/*
+      - github/**/*
+      - pretty/**/*
+      - spr/**/*
+      - terminal/**/*
+      - tools/**/*
       - .goreleaser.yml
     cmd: goreleaser --snapshot --skip=publish --clean
     generates:
