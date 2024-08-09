@@ -305,7 +305,7 @@ func (sd *stackediff) MergePullRequests(ctx context.Context, count *uint) {
 		prIndex--
 	}
 	if prIndex == -1 {
-		return
+		check(errors.New("no PR to merge"))
 	}
 	prToMerge := githubInfo.PullRequests[prIndex]
 
