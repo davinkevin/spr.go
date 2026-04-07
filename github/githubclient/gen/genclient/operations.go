@@ -44,6 +44,7 @@ func (c *gqlclient) PullRequests(ctx context.Context,
 				headRefName
 				mergeable
 				reviewDecision
+				isDraft
 				repository {
 					id
 				}
@@ -113,7 +114,7 @@ type PullRequestsWithMergeQueueResponse struct {
 	Repository *PullRequestsWithMergeQueueRepository
 }
 
-// PullRequestsWithMergeQueue from github/githubclient/queries.graphql:40
+// PullRequestsWithMergeQueue from github/githubclient/queries.graphql:41
 func (c *gqlclient) PullRequestsWithMergeQueue(ctx context.Context,
 	repoOwner string,
 	repoName string,
@@ -133,6 +134,7 @@ func (c *gqlclient) PullRequestsWithMergeQueue(ctx context.Context,
 				headRefName
 				mergeable
 				reviewDecision
+				isDraft
 				repository {
 					id
 				}
@@ -215,7 +217,7 @@ type AssignableUsersResponse struct {
 	Repository *AssignableUsersRepository
 }
 
-// AssignableUsers from github/githubclient/queries.graphql:82
+// AssignableUsers from github/githubclient/queries.graphql:84
 func (c *gqlclient) AssignableUsers(ctx context.Context,
 	repoOwner string,
 	repoName string,
@@ -286,7 +288,7 @@ type CreatePullRequestResponse struct {
 	CreatePullRequest *CreatePullRequestCreatePullRequest
 }
 
-// CreatePullRequest from github/githubclient/queries.graphql:102
+// CreatePullRequest from github/githubclient/queries.graphql:104
 func (c *gqlclient) CreatePullRequest(ctx context.Context,
 	input CreatePullRequestInput,
 ) (*CreatePullRequestResponse, error) {
@@ -345,7 +347,7 @@ type UpdatePullRequestResponse struct {
 	UpdatePullRequest *UpdatePullRequestUpdatePullRequest
 }
 
-// UpdatePullRequest from github/githubclient/queries.graphql:116
+// UpdatePullRequest from github/githubclient/queries.graphql:118
 func (c *gqlclient) UpdatePullRequest(ctx context.Context,
 	input UpdatePullRequestInput,
 ) (*UpdatePullRequestResponse, error) {
@@ -402,7 +404,7 @@ type AddReviewersResponse struct {
 	RequestReviews *AddReviewersRequestReviews
 }
 
-// AddReviewers from github/githubclient/queries.graphql:128
+// AddReviewers from github/githubclient/queries.graphql:130
 func (c *gqlclient) AddReviewers(ctx context.Context,
 	input RequestReviewsInput,
 ) (*AddReviewersResponse, error) {
@@ -455,7 +457,7 @@ type CommentPullRequestResponse struct {
 	AddComment *CommentPullRequestAddComment
 }
 
-// CommentPullRequest from github/githubclient/queries.graphql:140
+// CommentPullRequest from github/githubclient/queries.graphql:142
 func (c *gqlclient) CommentPullRequest(ctx context.Context,
 	input AddCommentInput,
 ) (*CommentPullRequestResponse, error) {
@@ -510,7 +512,7 @@ type MergePullRequestResponse struct {
 	MergePullRequest *MergePullRequestMergePullRequest
 }
 
-// MergePullRequest from github/githubclient/queries.graphql:150
+// MergePullRequest from github/githubclient/queries.graphql:152
 func (c *gqlclient) MergePullRequest(ctx context.Context,
 	input MergePullRequestInput,
 ) (*MergePullRequestResponse, error) {
@@ -567,7 +569,7 @@ type AutoMergePullRequestResponse struct {
 	EnablePullRequestAutoMerge *AutoMergePullRequestEnablePullRequestAutoMerge
 }
 
-// AutoMergePullRequest from github/githubclient/queries.graphql:162
+// AutoMergePullRequest from github/githubclient/queries.graphql:164
 func (c *gqlclient) AutoMergePullRequest(ctx context.Context,
 	input EnablePullRequestAutoMergeInput,
 ) (*AutoMergePullRequestResponse, error) {
@@ -611,6 +613,120 @@ func (c *gqlclient) AutoMergePullRequest(ctx context.Context,
 	return data, resp.Errors
 }
 
+type MarkPullRequestReadyForReviewMarkPullRequestReadyForReview struct {
+	PullRequest *MarkPullRequestReadyForReviewMarkPullRequestReadyForReviewPullRequest
+}
+
+type MarkPullRequestReadyForReviewMarkPullRequestReadyForReviewPullRequest struct {
+	Id string
+}
+
+// MarkPullRequestReadyForReviewResponse response type for MarkPullRequestReadyForReview
+type MarkPullRequestReadyForReviewResponse struct {
+	MarkPullRequestReadyForReview *MarkPullRequestReadyForReviewMarkPullRequestReadyForReview
+}
+
+// MarkPullRequestReadyForReview from github/githubclient/queries.graphql:176
+func (c *gqlclient) MarkPullRequestReadyForReview(ctx context.Context,
+	input MarkPullRequestReadyForReviewInput,
+) (*MarkPullRequestReadyForReviewResponse, error) {
+
+	var markPullRequestReadyForReviewOperation string = `
+	mutation MarkPullRequestReadyForReview ($input: MarkPullRequestReadyForReviewInput!) {
+	markPullRequestReadyForReview(input: $input) {
+		pullRequest {
+			id
+		}
+	}
+}
+`
+
+	gqlreq := &client.GQLRequest{
+		OperationName: "MarkPullRequestReadyForReview",
+		Query:         markPullRequestReadyForReviewOperation,
+		Variables: map[string]interface{}{
+			"input": input,
+		},
+	}
+
+	resp := &client.GQLResponse{
+		Data: &MarkPullRequestReadyForReviewResponse{},
+	}
+
+	err := c.gql.Query(ctx, gqlreq, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var data *MarkPullRequestReadyForReviewResponse
+	if resp.Data != nil {
+		data = resp.Data.(*MarkPullRequestReadyForReviewResponse)
+	}
+
+	if resp.Errors == nil {
+		return data, nil
+	}
+
+	return data, resp.Errors
+}
+
+type ConvertPullRequestToDraftConvertPullRequestToDraft struct {
+	PullRequest *ConvertPullRequestToDraftConvertPullRequestToDraftPullRequest
+}
+
+type ConvertPullRequestToDraftConvertPullRequestToDraftPullRequest struct {
+	Id string
+}
+
+// ConvertPullRequestToDraftResponse response type for ConvertPullRequestToDraft
+type ConvertPullRequestToDraftResponse struct {
+	ConvertPullRequestToDraft *ConvertPullRequestToDraftConvertPullRequestToDraft
+}
+
+// ConvertPullRequestToDraft from github/githubclient/queries.graphql:188
+func (c *gqlclient) ConvertPullRequestToDraft(ctx context.Context,
+	input ConvertPullRequestToDraftInput,
+) (*ConvertPullRequestToDraftResponse, error) {
+
+	var convertPullRequestToDraftOperation string = `
+	mutation ConvertPullRequestToDraft ($input: ConvertPullRequestToDraftInput!) {
+	convertPullRequestToDraft(input: $input) {
+		pullRequest {
+			id
+		}
+	}
+}
+`
+
+	gqlreq := &client.GQLRequest{
+		OperationName: "ConvertPullRequestToDraft",
+		Query:         convertPullRequestToDraftOperation,
+		Variables: map[string]interface{}{
+			"input": input,
+		},
+	}
+
+	resp := &client.GQLResponse{
+		Data: &ConvertPullRequestToDraftResponse{},
+	}
+
+	err := c.gql.Query(ctx, gqlreq, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var data *ConvertPullRequestToDraftResponse
+	if resp.Data != nil {
+		data = resp.Data.(*ConvertPullRequestToDraftResponse)
+	}
+
+	if resp.Errors == nil {
+		return data, nil
+	}
+
+	return data, resp.Errors
+}
+
 type ClosePullRequestClosePullRequest struct {
 	PullRequest *ClosePullRequestClosePullRequestPullRequest
 }
@@ -624,7 +740,7 @@ type ClosePullRequestResponse struct {
 	ClosePullRequest *ClosePullRequestClosePullRequest
 }
 
-// ClosePullRequest from github/githubclient/queries.graphql:174
+// ClosePullRequest from github/githubclient/queries.graphql:200
 func (c *gqlclient) ClosePullRequest(ctx context.Context,
 	input ClosePullRequestInput,
 ) (*ClosePullRequestResponse, error) {
@@ -691,7 +807,7 @@ type StarCheckResponse struct {
 	Viewer StarCheckViewer
 }
 
-// StarCheck from github/githubclient/queries.graphql:186
+// StarCheck from github/githubclient/queries.graphql:212
 func (c *gqlclient) StarCheck(ctx context.Context,
 	after *string,
 ) (*StarCheckResponse, error) {
@@ -750,7 +866,7 @@ type StarGetRepoResponse struct {
 	Repository *StarGetRepoRepository
 }
 
-// StarGetRepo from github/githubclient/queries.graphql:202
+// StarGetRepo from github/githubclient/queries.graphql:228
 func (c *gqlclient) StarGetRepo(ctx context.Context,
 	owner string,
 	name string,
@@ -803,7 +919,7 @@ type StarAddResponse struct {
 	AddStar *StarAddAddStar
 }
 
-// StarAdd from github/githubclient/queries.graphql:211
+// StarAdd from github/githubclient/queries.graphql:237
 func (c *gqlclient) StarAdd(ctx context.Context,
 	input AddStarInput,
 ) (*StarAddResponse, error) {

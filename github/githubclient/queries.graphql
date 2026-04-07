@@ -14,6 +14,7 @@ query PullRequests(
 				headRefName
 				mergeable
 				reviewDecision
+				isDraft
 				repository {
 					id
 				}
@@ -53,6 +54,7 @@ query PullRequestsWithMergeQueue(
 				headRefName
 				mergeable
 				reviewDecision
+				isDraft
 				repository {
 					id
 				}
@@ -167,6 +169,30 @@ mutation AutoMergePullRequest(
 	) {
 		pullRequest {
 			number
+		}
+	}
+}
+
+mutation MarkPullRequestReadyForReview(
+	$input: MarkPullRequestReadyForReviewInput!
+) {
+	markPullRequestReadyForReview(
+		input: $input
+	) {
+		pullRequest {
+			id
+		}
+	}
+}
+
+mutation ConvertPullRequestToDraft(
+	$input: ConvertPullRequestToDraftInput!
+) {
+	convertPullRequestToDraft(
+		input: $input
+	) {
+		pullRequest {
+			id
 		}
 	}
 }

@@ -2143,6 +2143,11 @@ type ClosePullRequestInput struct {
 	PullRequestId    string  `json:"pullRequestId"`
 }
 
+type ConvertPullRequestToDraftInput struct {
+	ClientMutationId *string `json:"clientMutationId,omitempty"`
+	PullRequestId    string  `json:"pullRequestId"`
+}
+
 type CreatePullRequestInput struct {
 	BaseRefName         string  `json:"baseRefName"`
 	Body                *string `json:"body,omitempty"`
@@ -2163,6 +2168,11 @@ type EnablePullRequestAutoMergeInput struct {
 	ExpectedHeadOid  *string                 `json:"expectedHeadOid,omitempty"`
 	MergeMethod      *PullRequestMergeMethod `json:"mergeMethod,omitempty"`
 	PullRequestId    string                  `json:"pullRequestId"`
+}
+
+type MarkPullRequestReadyForReviewInput struct {
+	ClientMutationId *string `json:"clientMutationId,omitempty"`
+	PullRequestId    string  `json:"pullRequestId"`
 }
 
 type MergePullRequestInput struct {

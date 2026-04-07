@@ -287,6 +287,7 @@ func matchPullRequestStack(
 			Body:       node.Body,
 			FromBranch: node.HeadRefName,
 			ToBranch:   node.BaseRefName,
+			IsDraft:    node.IsDraft,
 			Commits:    commits,
 			InQueue:    node.MergeQueueEntry != nil,
 		}
@@ -425,13 +426,15 @@ func (c *client) CreatePullRequest(ctx context.Context, gitcmd git.GitInterface,
 	templatizer := config_fetcher.PRTemplatizer(c.config, gitcmd)
 
 	body := templatizer.Body(info, commit, nil)
+	isClosestToBase := prevCommit == nil
+	draft := c.config.ShouldDraftPR(isClosestToBase)
 	resp, err := c.api.CreatePullRequest(ctx, genclient.CreatePullRequestInput{
 		RepositoryId: info.RepositoryID,
 		BaseRefName:  baseRefName,
 		HeadRefName:  headRefName,
 		Title:        templatizer.Title(info, commit),
 		Body:         &body,
-		Draft:        &c.config.User.CreateDraftPRs,
+		Draft:        &draft,
 	})
 	check(err)
 
@@ -443,6 +446,7 @@ func (c *client) CreatePullRequest(ctx context.Context, gitcmd git.GitInterface,
 		Commit:     commit,
 		Title:      commit.Subject,
 		Body:       resp.CreatePullRequest.PullRequest.Body,
+		IsDraft:    draft,
 		MergeStatus: github.PullRequestMergeStatus{
 			ChecksPass:     github.CheckStatusUnknown,
 			ReviewApproved: false,
@@ -517,6 +521,40 @@ func (c *client) UpdatePullRequest(ctx context.Context, gitcmd git.GitInterface,
 			Str("title", pr.Title).
 			Err(err).
 			Msg("pull request update failed")
+	}
+}
+
+func (c *client) MarkReadyForReview(ctx context.Context, pr *github.PullRequest) {
+	if c.config.User.LogGitHubCalls {
+		fmt.Printf("> github mark ready for review %d : %s\n", pr.Number, pr.Title)
+	}
+	_, err := c.api.MarkPullRequestReadyForReview(ctx, genclient.MarkPullRequestReadyForReviewInput{
+		PullRequestId: pr.ID,
+	})
+	if err != nil {
+		log.Fatal().
+			Str("id", pr.ID).
+			Int("number", pr.Number).
+			Str("title", pr.Title).
+			Err(err).
+			Msg("mark ready for review failed")
+	}
+}
+
+func (c *client) ConvertToDraft(ctx context.Context, pr *github.PullRequest) {
+	if c.config.User.LogGitHubCalls {
+		fmt.Printf("> github convert to draft %d : %s\n", pr.Number, pr.Title)
+	}
+	_, err := c.api.ConvertPullRequestToDraft(ctx, genclient.ConvertPullRequestToDraftInput{
+		PullRequestId: pr.ID,
+	})
+	if err != nil {
+		log.Fatal().
+			Str("id", pr.ID).
+			Int("number", pr.Number).
+			Str("title", pr.Title).
+			Err(err).
+			Msg("convert to draft failed")
 	}
 }
 

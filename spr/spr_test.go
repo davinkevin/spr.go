@@ -35,6 +35,7 @@ func makeTestObjects(t *testing.T, synchronized bool) (
 		RepositoryID: "RepoID",
 		LocalBranch:  "master",
 	}
+	githubmock.Config = cfg
 	s = NewStackedPR(cfg, githubmock, gitmock)
 	output = &bytes.Buffer{}
 	s.output = output
@@ -1005,6 +1006,526 @@ func TestSPRFetchOverridesNoFetchConfig(t *testing.T) {
 	gitmock.ExpectationsMet()
 	githubmock.ExpectationsMet()
 	output.Reset()
+}
+
+func TestSPRAllExceptNextMarkReadyForReview(t *testing.T) {
+	testSPRAllExceptNextMarkReadyForReview(t, true)
+	testSPRAllExceptNextMarkReadyForReview(t, false)
+}
+
+func testSPRAllExceptNextMarkReadyForReview(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		// Enable allExceptNext mode
+		s.config.User.CreateDraftPRs = "allExceptNext"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// 'git spr update' :: create two PRs
+		//  c1 is closest to base (prevCommit=nil) -> created non-draft (no flip needed)
+		//  c2 is stacked on c1 (prevCommit=c1) -> created as draft (no flip needed)
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Simulate: c1 was merged externally, now c2 is closest to base.
+		// c2 was created as draft and must be flipped to ready-for-review.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2})
+		githubmock.ExpectCommentPullRequest(c1)
+		githubmock.ExpectClosePullRequest(c1)
+		gitmock.ExpectStatus()
+		githubmock.ExpectUpdatePullRequest(c2, nil)
+		githubmock.ExpectMarkReadyForReview(c2)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("[vvvv]   1 : test commit 2", lines[0])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+	})
+}
+
+// Switching from "none" to "allExceptNext" on an existing stack must convert
+// non-closest-to-base PRs to draft (the previously-missing direction).
+func TestSPRAllExceptNextConvertsExistingPRsToDraft(t *testing.T) {
+	testSPRAllExceptNextConvertsExistingPRsToDraft(t, true)
+	testSPRAllExceptNextConvertsExistingPRsToDraft(t, false)
+}
+
+func testSPRAllExceptNextConvertsExistingPRsToDraft(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, _ := makeTestObjects(t, sync)
+		ctx := context.Background()
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// First run with no draft mode: both PRs created non-draft, no flips.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+
+		// User flips config to allExceptNext. c2 (not closest-to-base) must
+		// be converted to draft. c1 (closest-to-base) stays open.
+		s.config.User.CreateDraftPRs = "allExceptNext"
+
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectStatus()
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectConvertToDraft(c2)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode "all" creates every PR as draft. No flips on subsequent runs.
+func TestSPRDraftModeAll(t *testing.T) {
+	testSPRDraftModeAll(t, true)
+	testSPRDraftModeAll(t, false)
+}
+
+func testSPRDraftModeAll(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, _ := makeTestObjects(t, sync)
+		ctx := context.Background()
+
+		s.config.User.CreateDraftPRs = "all"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		// No MarkReadyForReview / ConvertToDraft expected: both PRs created as draft.
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode allExceptNext + count=1: merging the closest-to-base PR must flip the
+// next PR (now closest-to-base) from draft to ready. PRs further up stay draft.
+func TestSPRMergeAllExceptNextFlipsNewClosestToReady(t *testing.T) {
+	testSPRMergeAllExceptNextFlipsNewClosestToReady(t, true)
+	testSPRMergeAllExceptNextFlipsNewClosestToReady(t, false)
+}
+
+func testSPRMergeAllExceptNextFlipsNewClosestToReady(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		s.config.User.CreateDraftPRs = "allExceptNext"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+		c3 := git.Commit{
+			CommitID:   "00000003",
+			CommitHash: "c300000000000000000000000000000000000000",
+			Subject:    "test commit 3",
+		}
+
+		// Create 3 PRs: c1 ready (closest-to-base), c2 and c3 draft.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c3, &c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2, &c3})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectCreatePullRequest(c3, &c2)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c3, &c2)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Merge c1. c1 was already ready so no MarkReadyForReview for it.
+		// After merge, c2 becomes closest-to-base and must flip to ready.
+		// c3 stays draft.
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectMergePullRequest(c1, genclient.PullRequestMergeMethod_REBASE)
+		githubmock.ExpectMarkReadyForReview(c2)
+		count := uint(1)
+		s.MergePullRequests(ctx, &count)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode allExceptNext + count > 1: the PR being merged sits above the closest-
+// to-base, so it was created as draft. It must be marked ready *before* merge
+// (GitHub refuses to merge a draft) and the new closest-to-base above flips ready.
+func TestSPRMergeAllExceptNextCountMarksMergingPRReady(t *testing.T) {
+	testSPRMergeAllExceptNextCountMarksMergingPRReady(t, true)
+	testSPRMergeAllExceptNextCountMarksMergingPRReady(t, false)
+}
+
+func testSPRMergeAllExceptNextCountMarksMergingPRReady(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		s.config.User.CreateDraftPRs = "allExceptNext"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+		c3 := git.Commit{
+			CommitID:   "00000003",
+			CommitHash: "c300000000000000000000000000000000000000",
+			Subject:    "test commit 3",
+		}
+		c4 := git.Commit{
+			CommitID:   "00000004",
+			CommitHash: "c400000000000000000000000000000000000000",
+			Subject:    "test commit 4",
+		}
+
+		// Create 4 PRs: c1 ready, c2/c3/c4 draft.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c4, &c3, &c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2, &c3, &c4})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectCreatePullRequest(c3, &c2)
+		githubmock.ExpectCreatePullRequest(c4, &c3)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c3, &c2)
+		githubmock.ExpectUpdatePullRequest(c4, &c3)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Merge with count=2: c2 is prToMerge (was draft -> MarkReadyForReview).
+		// c1 below is closed. c3 becomes new closest-to-base -> flip ready.
+		// c4 stays draft.
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectMarkReadyForReview(c2)
+		githubmock.ExpectUpdatePullRequest(c2, nil)
+		githubmock.ExpectMergePullRequest(c2, genclient.PullRequestMergeMethod_REBASE)
+		githubmock.ExpectCommentPullRequest(c1)
+		githubmock.ExpectClosePullRequest(c1)
+		githubmock.ExpectMarkReadyForReview(c3)
+		s.MergePullRequests(ctx, uintptr(2))
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		assert.Equal("MERGED   1 : test commit 2", lines[1])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode allExceptNext + merge all (no count): the topmost PR in the stack is
+// selected as prToMerge; it was draft and must be marked ready. No PRs left
+// above so no extra reconciliation happens.
+func TestSPRMergeAllExceptNextMergeAll(t *testing.T) {
+	testSPRMergeAllExceptNextMergeAll(t, true)
+	testSPRMergeAllExceptNextMergeAll(t, false)
+}
+
+func testSPRMergeAllExceptNextMergeAll(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		s.config.User.CreateDraftPRs = "allExceptNext"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// Create 2 PRs: c1 ready, c2 draft.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Merge all: prToMerge=c2 (was draft -> MarkReadyForReview). c1 closed
+		// below. No PRs above c2 so no reconciliation.
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectMarkReadyForReview(c2)
+		githubmock.ExpectUpdatePullRequest(c2, nil)
+		githubmock.ExpectMergePullRequest(c2, genclient.PullRequestMergeMethod_REBASE)
+		githubmock.ExpectCommentPullRequest(c1)
+		githubmock.ExpectClosePullRequest(c1)
+		s.MergePullRequests(ctx, nil)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		assert.Equal("MERGED   1 : test commit 2", lines[1])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode all: every PR is draft. Merging a single PR must mark it ready (cannot
+// merge a draft). No flips for PRs left above (they should stay draft).
+func TestSPRMergeModeAllMarksMergingPRReady(t *testing.T) {
+	testSPRMergeModeAllMarksMergingPRReady(t, true)
+	testSPRMergeModeAllMarksMergingPRReady(t, false)
+}
+
+func testSPRMergeModeAllMarksMergingPRReady(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		s.config.User.CreateDraftPRs = "all"
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// Create 2 PRs, both draft.
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Merge c1 (count=1). c1 is draft -> MarkReadyForReview before merge.
+		// c2 stays draft (mode all keeps everything draft).
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectMarkReadyForReview(c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectMergePullRequest(c1, genclient.PullRequestMergeMethod_REBASE)
+		count := uint(1)
+		s.MergePullRequests(ctx, &count)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode none: nothing should be drafted. If a user manually drafted a PR
+// outside of spr, the post-merge reconciliation must flip it back to ready.
+func TestSPRMergeReconcilesUserDraftedPR(t *testing.T) {
+	testSPRMergeReconcilesUserDraftedPR(t, true)
+	testSPRMergeReconcilesUserDraftedPR(t, false)
+}
+
+func testSPRMergeReconcilesUserDraftedPR(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		// Mode none: no automated drafting.
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// Create 2 PRs, both ready (mode none).
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Simulate the user manually drafting the upper PR via the GitHub UI.
+		githubmock.Info.PullRequests[1].IsDraft = true
+
+		// Merge c1. After merge, the reconciliation loop sees c2 with
+		// IsDraft=true while ShouldDraftPR(true)=false in mode none -> flip ready.
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectMergePullRequest(c1, genclient.PullRequestMergeMethod_REBASE)
+		githubmock.ExpectMarkReadyForReview(c2)
+		count := uint(1)
+		s.MergePullRequests(ctx, &count)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
+}
+
+// Mode none + normal merge: regression test that no draft-related calls are made.
+func TestSPRMergeModeNoneNoDraftCalls(t *testing.T) {
+	testSPRMergeModeNoneNoDraftCalls(t, true)
+	testSPRMergeModeNoneNoDraftCalls(t, false)
+}
+
+func testSPRMergeModeNoneNoDraftCalls(t *testing.T, sync bool) {
+	t.Run(fmt.Sprintf("Sync: %v", sync), func(t *testing.T) {
+		s, gitmock, githubmock, _, output := makeTestObjects(t, sync)
+		assert := require.New(t)
+		ctx := context.Background()
+
+		c1 := git.Commit{
+			CommitID:   "00000001",
+			CommitHash: "c100000000000000000000000000000000000000",
+			Subject:    "test commit 1",
+		}
+		c2 := git.Commit{
+			CommitID:   "00000002",
+			CommitHash: "c200000000000000000000000000000000000000",
+			Subject:    "test commit 2",
+		}
+
+		// Create 2 PRs, both ready (mode none, the default).
+		githubmock.ExpectGetInfo()
+		gitmock.ExpectFetch()
+		gitmock.ExpectLogAndRespond([]*git.Commit{&c2, &c1})
+		gitmock.ExpectPushCommits([]*git.Commit{&c1, &c2})
+		githubmock.ExpectCreatePullRequest(c1, nil)
+		githubmock.ExpectCreatePullRequest(c2, &c1)
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectUpdatePullRequest(c2, &c1)
+		githubmock.ExpectGetInfo()
+		s.UpdatePullRequests(ctx, nil, nil)
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+		output.Reset()
+
+		// Merge c1. No MarkReadyForReview / ConvertToDraft expected anywhere.
+		githubmock.ExpectGetInfo()
+		githubmock.ExpectUpdatePullRequest(c1, nil)
+		githubmock.ExpectMergePullRequest(c1, genclient.PullRequestMergeMethod_REBASE)
+		count := uint(1)
+		s.MergePullRequests(ctx, &count)
+		lines := strings.Split(output.String(), "\n")
+		assert.Equal("MERGED   1 : test commit 1", lines[0])
+		gitmock.ExpectationsMet()
+		githubmock.ExpectationsMet()
+	})
 }
 
 func uintptr(a uint) *uint {

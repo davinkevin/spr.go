@@ -43,6 +43,10 @@ type RepoConfig struct {
 	ShowPrTitlesInStack    bool   `default:"false" yaml:"showPrTitlesInStack"`
 	BranchPushIndividually bool   `default:"false" yaml:"branchPushIndividually"`
 	BranchPrefix           string `yaml:"branchPrefix,omitempty"`
+
+	// CreateDraftPRs overrides UserConfig.CreateDraftPRs when non-empty.
+	// Allows per-repo draft policy (e.g. "allExceptNext") regardless of user default.
+	CreateDraftPRs string `yaml:"createDraftPRs,omitempty"`
 }
 
 type UserConfig struct {
@@ -52,7 +56,7 @@ type UserConfig struct {
 	StatusBitsHeader bool `default:"true" yaml:"statusBitsHeader"`
 	StatusBitsEmojis bool `default:"true" yaml:"statusBitsEmojis"`
 
-	CreateDraftPRs       bool   `default:"false" yaml:"createDraftPRs"`
+	CreateDraftPRs       string `default:"none" yaml:"createDraftPRs"`
 	PreserveTitleAndBody bool   `default:"false" yaml:"preserveTitleAndBody"`
 	NoRebase             bool   `default:"false" yaml:"noRebase"`
 	NoFetch              bool `default:"false" yaml:"noFetch"`
@@ -130,4 +134,23 @@ func (c Config) MergeMethod() (genclient.PullRequestMergeMethod, error) {
 		)
 	}
 	return mergeMethod, err
+}
+
+// ShouldDraftPR returns whether a pull request should be created as draft,
+// based on the CreateDraftPRs config and the PR's position in the stack.
+// isClosestToBase is true when the PR targets the main branch directly (prevCommit == nil).
+// The repo-level setting (RepoConfig.CreateDraftPRs) overrides the user-level one when non-empty.
+func (c Config) ShouldDraftPR(isClosestToBase bool) bool {
+	mode := c.User.CreateDraftPRs
+	if c.Repo != nil && c.Repo.CreateDraftPRs != "" {
+		mode = c.Repo.CreateDraftPRs
+	}
+	switch strings.ToLower(mode) {
+	case "all", "true":
+		return true
+	case "allexceptnext":
+		return !isClosestToBase
+	default: // "none", "false", ""
+		return false
+	}
 }

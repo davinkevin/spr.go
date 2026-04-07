@@ -29,6 +29,12 @@ type GitHubInterface interface {
 	// MergePullRequest merged the given pull request
 	MergePullRequest(ctx context.Context, pr *PullRequest, mergeMethod genclient.PullRequestMergeMethod)
 
+	// MarkReadyForReview marks a draft pull request as ready for review
+	MarkReadyForReview(ctx context.Context, pr *PullRequest)
+
+	// ConvertToDraft converts a non-draft pull request back to draft
+	ConvertToDraft(ctx context.Context, pr *PullRequest)
+
 	// ClosePullRequest closes the given pull request
 	ClosePullRequest(ctx context.Context, pr *PullRequest)
 }

@@ -39,6 +39,7 @@ type PullRequestsViewerPullRequestsNodes []*struct {
 	HeadRefName     string
 	Mergeable       MergeableState
 	ReviewDecision  *PullRequestReviewDecision
+	IsDraft         bool
 	Repository      PullRequestsViewerPullRequestsNodesRepository
 	MergeQueueEntry *PullRequestsViewerPullRequestsNodesMergeQueueEntry
 	Commits         PullRequestsViewerPullRequestsNodesCommits

@@ -21,6 +21,7 @@ type PullRequest struct {
 
 	MergeStatus    PullRequestMergeStatus
 	Merged         bool
+	IsDraft        bool
 	Commits        []git.Commit
 	InQueue        bool
 	LocalCommitHash string

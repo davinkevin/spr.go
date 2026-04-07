@@ -411,6 +411,23 @@ func (sd *stackediff) UpdatePullRequests(ctx context.Context, reviewers []string
 
 	wg.Wait()
 
+	// Reconcile draft state: for each PR, the desired state is given by
+	// ShouldDraftPR(prevCommit == nil). Flip in either direction if the PR's
+	// current IsDraft doesn't match. Handles config changes on existing stacks
+	// and stack reorderings (e.g. merge shifting the next-to-merge PR).
+	for _, u := range updateQueue {
+		want := sd.config.ShouldDraftPR(u.prevCommit == nil)
+		if want == u.pr.IsDraft {
+			continue
+		}
+		if want {
+			sd.github.ConvertToDraft(ctx, u.pr)
+		} else {
+			sd.github.MarkReadyForReview(ctx, u.pr)
+		}
+		u.pr.IsDraft = want
+	}
+
 	sd.profiletimer.Step("UpdatePullRequests::commitUpdateQueue")
 
 	sd.StatusPullRequests(ctx)
@@ -475,6 +492,14 @@ func (sd *stackediff) MergePullRequests(ctx context.Context, count *uint) {
 	}
 	prToMerge := githubInfo.PullRequests[prIndex]
 
+	// Ensure the PR we're about to merge is ready. In allExceptNext mode with
+	// count > 1, prToMerge sits above the closest-to-base PR and was created
+	// as draft; GitHub refuses to merge a draft PR.
+	if prToMerge.IsDraft {
+		sd.github.MarkReadyForReview(ctx, prToMerge)
+		prToMerge.IsDraft = false
+	}
+
 	// Update the base of the merging pr to target branch
 	sd.github.UpdatePullRequest(ctx, sd.gitcmd, githubInfo, githubInfo.PullRequests, prToMerge, prToMerge.Commit, nil)
 	sd.profiletimer.Step("MergePullRequests::update pr base")
@@ -501,6 +526,24 @@ func (sd *stackediff) MergePullRequests(ctx context.Context, count *uint) {
 		}
 	}
 	sd.profiletimer.Step("MergePullRequests::close prs")
+
+	// Reconcile draft state for PRs left above the merged one. After the merge
+	// the PR at prIndex+1 becomes the new closest-to-base; in modes like
+	// allExceptNext it must flip from draft to ready.
+	for i := prIndex + 1; i < len(githubInfo.PullRequests); i++ {
+		pr := githubInfo.PullRequests[i]
+		isClosestToBase := i == prIndex+1
+		want := sd.config.ShouldDraftPR(isClosestToBase)
+		if want == pr.IsDraft {
+			continue
+		}
+		if want {
+			sd.github.ConvertToDraft(ctx, pr)
+		} else {
+			sd.github.MarkReadyForReview(ctx, pr)
+		}
+		pr.IsDraft = want
+	}
 
 	for i := 0; i <= prIndex; i++ {
 		pr := githubInfo.PullRequests[i]

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ejoffe/spr/config"
 	"github.com/ejoffe/spr/git"
 	"github.com/ejoffe/spr/github"
 	"github.com/ejoffe/spr/github/githubclient/gen/genclient"
@@ -28,6 +29,7 @@ func NewMockClient(t *testing.T) *MockClient {
 type MockClient struct {
 	assert       *require.Assertions
 	Info         *github.GitHubInfo
+	Config       *config.Config // optional; when set, CreatePullRequest computes IsDraft via ShouldDraftPR
 	expect       []expectation
 	expectMutex  sync.Mutex
 	Synchronized bool // When true code is executed without goroutines. Allows test to be deterministic
@@ -64,6 +66,11 @@ func (c *MockClient) CreatePullRequest(ctx context.Context, gitcmd git.GitInterf
 		prev:   prevCommit,
 	})
 
+	isDraft := false
+	if c.Config != nil {
+		isDraft = c.Config.ShouldDraftPR(prevCommit == nil)
+	}
+
 	// TODO - don't hardcode ID and Number
 	// TODO - set FromBranch and ToBranch correctly
 	return &github.PullRequest{
@@ -73,6 +80,7 @@ func (c *MockClient) CreatePullRequest(ctx context.Context, gitcmd git.GitInterf
 		ToBranch:   "to_branch",
 		Commit:     commit,
 		Title:      commit.Subject,
+		IsDraft:    isDraft,
 		MergeStatus: github.PullRequestMergeStatus{
 			ChecksPass:     github.CheckStatusPass,
 			ReviewApproved: true,
@@ -113,6 +121,22 @@ func (c *MockClient) MergePullRequest(ctx context.Context,
 		op:          mergePullRequestOP,
 		commit:      pr.Commit,
 		mergeMethod: mergeMethod,
+	})
+}
+
+func (c *MockClient) MarkReadyForReview(ctx context.Context, pr *github.PullRequest) {
+	fmt.Printf("HUB: MarkReadyForReview\n")
+	c.verifyExpectation(expectation{
+		op:     markReadyForReviewOP,
+		commit: pr.Commit,
+	})
+}
+
+func (c *MockClient) ConvertToDraft(ctx context.Context, pr *github.PullRequest) {
+	fmt.Printf("HUB: ConvertToDraft\n")
+	c.verifyExpectation(expectation{
+		op:     convertToDraftOP,
+		commit: pr.Commit,
 	})
 }
 
@@ -195,6 +219,26 @@ func (c *MockClient) ExpectMergePullRequest(commit git.Commit, mergeMethod gencl
 	})
 }
 
+func (c *MockClient) ExpectMarkReadyForReview(commit git.Commit) {
+	c.expectMutex.Lock()
+	defer c.expectMutex.Unlock()
+
+	c.expect = append(c.expect, expectation{
+		op:     markReadyForReviewOP,
+		commit: commit,
+	})
+}
+
+func (c *MockClient) ExpectConvertToDraft(commit git.Commit) {
+	c.expectMutex.Lock()
+	defer c.expectMutex.Unlock()
+
+	c.expect = append(c.expect, expectation{
+		op:     convertToDraftOP,
+		commit: commit,
+	})
+}
+
 func (c *MockClient) ExpectClosePullRequest(commit git.Commit) {
 	c.expectMutex.Lock()
 	defer c.expectMutex.Unlock()
@@ -250,6 +294,8 @@ const (
 	addReviewersOP       operation = "AddReviewers"
 	commentPullRequestOP operation = "CommentPullRequest"
 	mergePullRequestOP   operation = "MergePullRequest"
+	markReadyForReviewOP operation = "MarkReadyForReview"
+	convertToDraftOP     operation = "ConvertToDraft"
 	closePullRequestOP   operation = "ClosePullRequest"
 )
 
