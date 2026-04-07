@@ -51,7 +51,7 @@ type UserConfig struct {
 	StatusBitsHeader bool `default:"true" yaml:"statusBitsHeader"`
 	StatusBitsEmojis bool `default:"true" yaml:"statusBitsEmojis"`
 
-	CreateDraftPRs       bool   `default:"false" yaml:"createDraftPRs"`
+	CreateDraftPRs       string `default:"none" yaml:"createDraftPRs"`
 	PreserveTitleAndBody bool   `default:"false" yaml:"preserveTitleAndBody"`
 	NoRebase             bool   `default:"false" yaml:"noRebase"`
 	DeleteMergedBranches bool `default:"false" yaml:"deleteMergedBranches"`
@@ -128,4 +128,18 @@ func (c Config) MergeMethod() (genclient.PullRequestMergeMethod, error) {
 		)
 	}
 	return mergeMethod, err
+}
+
+// ShouldDraftPR returns whether a pull request should be created as draft,
+// based on the CreateDraftPRs config and the PR's position in the stack.
+// isClosestToBase is true when the PR targets the main branch directly (prevCommit == nil).
+func (c Config) ShouldDraftPR(isClosestToBase bool) bool {
+	switch strings.ToLower(c.User.CreateDraftPRs) {
+	case "all", "true":
+		return true
+	case "allexceptnext":
+		return !isClosestToBase
+	default: // "none", "false", ""
+		return false
+	}
 }

@@ -395,13 +395,15 @@ func (c *client) CreatePullRequest(ctx context.Context, gitcmd git.GitInterface,
 	templatizer := config_fetcher.PRTemplatizer(c.config, gitcmd)
 
 	body := templatizer.Body(info, commit, nil)
+	isClosestToBase := prevCommit == nil
+	draft := c.config.ShouldDraftPR(isClosestToBase)
 	resp, err := c.api.CreatePullRequest(ctx, genclient.CreatePullRequestInput{
 		RepositoryId: info.RepositoryID,
 		BaseRefName:  baseRefName,
 		HeadRefName:  headRefName,
 		Title:        templatizer.Title(info, commit),
 		Body:         &body,
-		Draft:        &c.config.User.CreateDraftPRs,
+		Draft:        &draft,
 	})
 	check(err)
 

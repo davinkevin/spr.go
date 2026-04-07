@@ -5,6 +5,7 @@ import (
 
 	"github.com/ejoffe/spr/github/githubclient/gen/genclient"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 func TestEmptyConfig(t *testing.T) {
@@ -42,6 +43,7 @@ func TestDefaultConfig(t *testing.T) {
 			LogGitHubCalls:   false,
 			StatusBitsHeader: true,
 			StatusBitsEmojis: true,
+			CreateDraftPRs:   "none",
 			BranchPrefix:     "spr",
 		},
 		State: &InternalState{
@@ -125,6 +127,70 @@ func TestBranchPrefix(t *testing.T) {
 		}
 		assert.Equal(t, "johndoe/spr", cfg.BranchPrefix())
 	})
+}
+
+func TestCreateDraftPRsYAMLBackwardCompat(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		yaml     string
+		expected string
+	}{
+		{"legacy bool true", "createDraftPRs: true", "true"},
+		{"legacy bool false", "createDraftPRs: false", "false"},
+		{"string none", "createDraftPRs: none", "none"},
+		{"string all", "createDraftPRs: all", "all"},
+		{"string allExceptNext", "createDraftPRs: allExceptNext", "allExceptNext"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg UserConfig
+			err := yaml.Unmarshal([]byte(tc.yaml), &cfg)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, cfg.CreateDraftPRs)
+		})
+	}
+}
+
+func TestShouldDraftPR(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		configValue     string
+		isClosestToBase bool
+		expected        bool
+	}{
+		// "none" mode
+		{"none - closest to base", "none", true, false},
+		{"none - not closest to base", "none", false, false},
+
+		// "all" mode
+		{"all - closest to base", "all", true, true},
+		{"all - not closest to base", "all", false, true},
+
+		// "allExceptNext" mode
+		{"allExceptNext - closest to base", "allExceptNext", true, false},
+		{"allExceptNext - not closest to base", "allExceptNext", false, true},
+
+		// backward compat: bool "true" maps to "all"
+		{"true (legacy) - closest to base", "true", true, true},
+		{"true (legacy) - not closest to base", "true", false, true},
+
+		// backward compat: bool "false" maps to "none"
+		{"false (legacy) - closest to base", "false", true, false},
+		{"false (legacy) - not closest to base", "false", false, false},
+
+		// empty string defaults to "none"
+		{"empty string - closest to base", "", true, false},
+		{"empty string - not closest to base", "", false, false},
+
+		// case insensitivity
+		{"ALLEXCEPTNEXT (uppercase)", "ALLEXCEPTNEXT", false, true},
+		{"All (mixed case)", "All", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{User: &UserConfig{CreateDraftPRs: tc.configValue}}
+			actual := cfg.ShouldDraftPR(tc.isClosestToBase)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
 }
 
 func TestNormalizeConfig(t *testing.T) {
