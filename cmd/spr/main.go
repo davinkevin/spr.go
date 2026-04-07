@@ -124,6 +124,10 @@ VERSION: fork of {{.Version}}
 				Name:  "Eitan Joffe",
 				Email: "eitan@inigolabs.com",
 			},
+			{
+				Name:  "Kevin DAVIN",
+				Email: "davin.kevin@gmail.com",
+			},
 		},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
