@@ -507,7 +507,7 @@ func (sd *stackediff) MergePullRequests(ctx context.Context, count *uint) {
 	// Merge pull request
 	mergeMethod, err := sd.config.MergeMethod()
 	check(err)
-	sd.github.MergePullRequest(ctx, prToMerge, mergeMethod)
+	sd.github.MergePullRequest(ctx, sd.gitcmd, prToMerge, mergeMethod)
 	if sd.config.User.DeleteMergedBranches {
 		sd.gitcmd.DeleteRemoteBranch(ctx, prToMerge.FromBranch)
 	}

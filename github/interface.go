@@ -27,7 +27,7 @@ type GitHubInterface interface {
 	CommentPullRequest(ctx context.Context, pr *PullRequest, comment string)
 
 	// MergePullRequest merged the given pull request
-	MergePullRequest(ctx context.Context, pr *PullRequest, mergeMethod genclient.PullRequestMergeMethod)
+	MergePullRequest(ctx context.Context, gitcmd git.GitInterface, pr *PullRequest, mergeMethod genclient.PullRequestMergeMethod)
 
 	// MarkReadyForReview marks a draft pull request as ready for review
 	MarkReadyForReview(ctx context.Context, pr *PullRequest)

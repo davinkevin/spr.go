@@ -603,23 +603,40 @@ func (c *client) CommentPullRequest(ctx context.Context, pr *github.PullRequest,
 }
 
 func (c *client) MergePullRequest(ctx context.Context,
-	pr *github.PullRequest, mergeMethod genclient.PullRequestMergeMethod) {
+	gitcmd git.GitInterface, pr *github.PullRequest, mergeMethod genclient.PullRequestMergeMethod) {
 	log.Debug().
 		Interface("PR", pr).
 		Str("mergeMethod", string(mergeMethod)).
 		Msg("MergePullRequest")
 
+	// Resolve the merge commit author from the local git config so that the merge
+	// commit GitHub creates carries a deterministic email instead of falling back
+	// to the primary email of whichever account the API token is associated with.
+	var authorEmail string
+	if err := gitcmd.Git("config user.email", &authorEmail); err != nil {
+		log.Warn().Err(err).Msg("MergePullRequest: failed to read git user.email")
+	}
+	authorEmail = strings.TrimSpace(authorEmail)
+
 	var err error
 	if c.config.Repo.MergeQueue {
-		_, err = c.api.AutoMergePullRequest(ctx, genclient.EnablePullRequestAutoMergeInput{
+		input := genclient.EnablePullRequestAutoMergeInput{
 			PullRequestId: pr.ID,
 			MergeMethod:   &mergeMethod,
-		})
+		}
+		if authorEmail != "" {
+			input.AuthorEmail = &authorEmail
+		}
+		_, err = c.api.AutoMergePullRequest(ctx, input)
 	} else {
-		_, err = c.api.MergePullRequest(ctx, genclient.MergePullRequestInput{
+		input := genclient.MergePullRequestInput{
 			PullRequestId: pr.ID,
 			MergeMethod:   &mergeMethod,
-		})
+		}
+		if authorEmail != "" {
+			input.AuthorEmail = &authorEmail
+		}
+		_, err = c.api.MergePullRequest(ctx, input)
 	}
 	if err != nil {
 		log.Fatal().

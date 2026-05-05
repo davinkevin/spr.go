@@ -115,7 +115,7 @@ func (c *MockClient) CommentPullRequest(ctx context.Context, pr *github.PullRequ
 }
 
 func (c *MockClient) MergePullRequest(ctx context.Context,
-	pr *github.PullRequest, mergeMethod genclient.PullRequestMergeMethod) {
+	gitcmd git.GitInterface, pr *github.PullRequest, mergeMethod genclient.PullRequestMergeMethod) {
 	fmt.Printf("HUB: MergePullRequest, method=%q\n", mergeMethod)
 	c.verifyExpectation(expectation{
 		op:          mergePullRequestOP,
