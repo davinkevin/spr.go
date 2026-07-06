@@ -1818,3 +1818,33 @@ func TestStatusPullRequestsTextMode(t *testing.T) {
 	assert.Equal("https://github.com/testowner/testrepo/pull/1 : first PR", lines[1])
 	githubmock.ExpectationsMet()
 }
+
+func TestUpdatePullRequestsNoRebaseSkipsSyncRebase(t *testing.T) {
+	s, gitmock, githubmock, _, output := makeTestObjects(t, true)
+	s.config.User.NoRebase = true
+	assert := require.New(t)
+	ctx := context.Background()
+
+	c1 := git.Commit{
+		CommitID:   "00000001",
+		CommitHash: "c100000000000000000000000000000000000000",
+		Subject:    "test commit 1",
+	}
+
+	// With NoRebase, the fetch still runs but the sync rebase onto the target
+	// branch is skipped (ExpectFetchNoRebase expects "git fetch" only).
+	githubmock.ExpectGetInfo()
+	gitmock.ExpectFetchNoRebase()
+	gitmock.ExpectLogAndRespond([]*git.Commit{&c1})
+	gitmock.ExpectPushCommits([]*git.Commit{&c1})
+	githubmock.ExpectCreatePullRequest(c1, nil)
+	githubmock.ExpectGetAssignableUsers()
+	githubmock.ExpectAddReviewers([]string{mockclient.NobodyUserID})
+	githubmock.ExpectUpdatePullRequest(c1, nil)
+	githubmock.ExpectGetInfo()
+	s.UpdatePullRequests(ctx, []string{mockclient.NobodyLogin}, nil)
+
+	assert.Equal("[vvvv]   1 : test commit 1\n", output.String())
+	gitmock.ExpectationsMet()
+	githubmock.ExpectationsMet()
+}

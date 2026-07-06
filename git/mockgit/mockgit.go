@@ -96,6 +96,11 @@ func (m *Mock) ExpectNoFetch() {
 	m.expect("git rebase origin/master --autostash")
 }
 
+// ExpectFetchNoRebase expects a fetch with the sync rebase skipped (NoRebase).
+func (m *Mock) ExpectFetchNoRebase() {
+	m.expect("git fetch")
+}
+
 func (m *Mock) ExpectDeleteBranch(branchName string) {
 	m.expect(fmt.Sprintf("git DeleteRemoteBranch(%s)", branchName))
 }

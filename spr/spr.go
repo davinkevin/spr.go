@@ -699,11 +699,17 @@ func (sd *stackediff) fetchAndGetGitHubInfo(ctx context.Context) *github.GitHubI
 	} else {
 		sd.gitcmd.MustGit("fetch", nil)
 	}
-	rebaseCommand := fmt.Sprintf("rebase %s/%s --autostash",
-		sd.config.Repo.GitHubRemote, sd.config.Repo.GitHubBranch)
-	err := sd.gitcmd.Git(rebaseCommand, nil)
-	if err != nil {
-		return nil
+	// The sync rebase reparents the whole stack onto the tip of the target
+	// branch. When the target has advanced, this changes the hash of commits
+	// that are already pushed and unchanged, invalidating their CI and reviews.
+	// NoRebase lets the user skip it and rebase manually when they choose to.
+	if !sd.config.User.NoRebase {
+		rebaseCommand := fmt.Sprintf("rebase %s/%s --autostash",
+			sd.config.Repo.GitHubRemote, sd.config.Repo.GitHubBranch)
+		err := sd.gitcmd.Git(rebaseCommand, nil)
+		if err != nil {
+			return nil
+		}
 	}
 	info := sd.github.GetInfo(ctx, sd.gitcmd)
 	if git.BranchNameRegex(sd.config.BranchPrefix()).FindString(info.LocalBranch) != "" {

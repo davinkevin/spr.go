@@ -80,10 +80,12 @@ func (c *gitcmd) GitWithEditor(argStr string, output *string, editorCmd string) 
 		return nil
 	}
 
-	// Rebase disabled
-	if (c.config.User.NoRebase) && strings.HasPrefix(argStr, "rebase") {
-		return nil
-	}
+	// NOTE: NoRebase is intentionally NOT enforced here. Disabling every git
+	// command that starts with "rebase" is too broad: it also swallows the
+	// reword rebase that injects commit-ids, `rebase --continue`/`--abort`
+	// used by edit sessions, and the amend rebase. NoRebase is now honored at
+	// the call site (fetchAndGetGitHubInfo), where it only skips the sync
+	// rebase onto the target branch.
 
 	log.Debug().Msg("git " + argStr)
 	if c.config.User.LogGitCommands {
@@ -102,7 +104,11 @@ func (c *gitcmd) GitWithEditor(argStr string, output *string, editorCmd string) 
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
 
-		if parts[1] != "" && strings.ToUpper(parts[0]) != "EDITOR" {
+		// Drop any inherited editor variables so the `-c core.editor` /
+		// `-c sequence.editor` set above always win. Otherwise an ambient
+		// GIT_EDITOR would override them and the reword helper never runs.
+		name := strings.ToUpper(parts[0])
+		if parts[1] != "" && name != "EDITOR" && name != "GIT_EDITOR" && name != "GIT_SEQUENCE_EDITOR" {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", parts[0], parts[1]))
 		}
 	}

@@ -55,11 +55,18 @@ func GetLocalCommitStack(cfg *config.Config, gitcmd GitInterface) []Commit {
 	gitcmd.MustGit(logCommand, &commitLog)
 	commits, valid := parseLocalCommitStack(commitLog)
 	if !valid {
-		// if not valid - run rebase to add commit ids
+		// Some commits are missing their commit-id trailer. Inject one into
+		// each of them by rewording, rebasing onto the stack's merge-base with
+		// the target branch rather than onto the target branch tip. Rebasing
+		// onto the merge-base does NOT reparent the stack onto an advanced
+		// target: commits below the first reworded commit keep their hash (so
+		// their already-pushed pull requests, CI runs and reviews are
+		// preserved), and git re-signs the rewritten commits when commit
+		// signing is enabled.
 		rewordPath, err := exec.LookPath("spr_reword_helper")
 		check(err)
-		rebaseCommand := fmt.Sprintf("rebase %s/%s -i --autosquash --autostash",
-			cfg.Repo.GitHubRemote, cfg.Repo.GitHubBranch)
+		base := mergeBaseWithTarget(cfg, gitcmd)
+		rebaseCommand := fmt.Sprintf("rebase %s -i --autosquash --autostash", base)
 		gitcmd.GitWithEditor(rebaseCommand, nil, rewordPath)
 
 		gitcmd.MustGit(logCommand, &commitLog)
@@ -72,6 +79,17 @@ func GetLocalCommitStack(cfg *config.Config, gitcmd GitInterface) []Commit {
 		}
 	}
 	return commits
+}
+
+// mergeBaseWithTarget returns the merge-base between the target branch and HEAD,
+// i.e. the commit the local stack is based on. Rewording onto this base instead
+// of the target branch tip avoids reparenting the stack when the target branch
+// has advanced, keeping unchanged commits (and their signatures) stable.
+func mergeBaseWithTarget(cfg *config.Config, gitcmd GitInterface) string {
+	var out string
+	gitcmd.MustGit(fmt.Sprintf("merge-base %s/%s HEAD",
+		cfg.Repo.GitHubRemote, cfg.Repo.GitHubBranch), &out)
+	return strings.TrimSpace(out)
 }
 
 func parseLocalCommitStack(commitLog string) ([]Commit, bool) {

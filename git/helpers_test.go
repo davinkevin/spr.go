@@ -1,6 +1,8 @@
 package git
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/ejoffe/spr/config"
@@ -93,4 +95,40 @@ func TestBranchNameFromCommitRepoOverride(t *testing.T) {
 	commit := Commit{CommitID: "deadbeef"}
 	result := BranchNameFromCommit(cfg, commit)
 	assert.Equal(t, "team-x/main/deadbeef", result)
+}
+
+// mergeBaseGit is a minimal in-package fake of GitInterface used to exercise
+// mergeBaseWithTarget without importing mockgit (which would create an import
+// cycle with package git).
+type mergeBaseGit struct {
+	base    string
+	gotArgs []string
+}
+
+func (f *mergeBaseGit) MustGit(args string, output *string) {
+	f.gotArgs = append(f.gotArgs, args)
+	if strings.HasPrefix(args, "merge-base") && output != nil {
+		// real git prints the sha followed by a trailing newline
+		*output = f.base + "\n"
+	}
+}
+func (f *mergeBaseGit) Git(args string, output *string) error { f.MustGit(args, output); return nil }
+func (f *mergeBaseGit) GitWithEditor(args string, output *string, editorCmd string) error {
+	f.MustGit(args, output)
+	return nil
+}
+func (f *mergeBaseGit) RootDir() string                                             { return "" }
+func (f *mergeBaseGit) DeleteRemoteBranch(ctx context.Context, branch string) error { return nil }
+
+func TestMergeBaseWithTarget(t *testing.T) {
+	cfg := config.EmptyConfig()
+	cfg.Repo.GitHubRemote = "origin"
+	cfg.Repo.GitHubBranch = "master"
+
+	f := &mergeBaseGit{base: "abc1234def5678"}
+	got := mergeBaseWithTarget(cfg, f)
+
+	assert.Equal(t, "abc1234def5678", got, "trailing newline should be trimmed")
+	assert.Equal(t, []string{"merge-base origin/master HEAD"}, f.gotArgs,
+		"reword must rebase onto the merge-base, not the target branch tip")
 }
