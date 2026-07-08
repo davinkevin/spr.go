@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/ejoffe/rake"
@@ -30,6 +31,47 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// buildMetadata resolves the commit, date and dirty flag for the version
+// string. It prefers the values stamped by the Go toolchain's VCS integration
+// (debug.ReadBuildInfo), which are present for plain `go build` as well as
+// goreleaser builds and — unlike the ldflags — also record whether the working
+// tree had uncommitted changes at build time. It falls back to the
+// ldflags-injected values when no VCS info is embedded (e.g. built outside a
+// git checkout).
+func buildMetadata() (commitOut, dateOut string, dirty bool) {
+	commitOut, dateOut = commit, date
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if s.Value != "" {
+				commitOut = s.Value
+			}
+		case "vcs.time":
+			if s.Value != "" {
+				dateOut = s.Value
+			}
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	return
+}
+
+// versionString builds the full version line, appending "-dirty" to the commit
+// when the build included uncommitted changes so a dev build is unambiguous.
+func versionString() string {
+	c, d, dirty := buildMetadata()
+	short := truncate(c, 8)
+	if dirty {
+		short += "-dirty"
+	}
+	return fmt.Sprintf("%s : %s : %s\n", version, d, short)
 }
 
 func init() {
@@ -131,7 +173,7 @@ VERSION: fork of {{.Version}}
 		Name:                 "spr",
 		Usage:                "Stacked Pull Requests on GitHub",
 		HideVersion:          true,
-		Version:              fmt.Sprintf("%s : %s : %s\n", version, date, truncate(commit, 8)),
+		Version:              versionString(),
 		EnableBashCompletion: true,
 		Authors: []*cli.Author{
 			{
