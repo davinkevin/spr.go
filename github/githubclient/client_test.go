@@ -1,6 +1,11 @@
 package githubclient
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ejoffe/spr/config"
@@ -660,7 +665,7 @@ func TestComputeRequiredCheckStatus(t *testing.T) {
 			expect:         github.CheckStatusPending,
 		},
 
-		// === Filtering: non-required checks are ignored ===
+		// === Filtering: non-required checks never block, failures are a warning ===
 		{
 			name: "NonRequiredFails_RequiredPasses",
 			contexts: []checkContextNode{
@@ -668,7 +673,25 @@ func TestComputeRequiredCheckStatus(t *testing.T) {
 				{TypeName: "CheckRun", Name: "optional-lint", Status: "COMPLETED", Conclusion: strPtr("FAILURE")},
 			},
 			requiredChecks: map[string]bool{"required-ci": true},
+			expect:         github.CheckStatusWarning,
+		},
+		{
+			name: "NonRequiredPending_RequiredPasses",
+			contexts: []checkContextNode{
+				{TypeName: "CheckRun", Name: "required-ci", Status: "COMPLETED", Conclusion: strPtr("SUCCESS")},
+				{TypeName: "CheckRun", Name: "optional-lint", Status: "IN_PROGRESS"},
+			},
+			requiredChecks: map[string]bool{"required-ci": true},
 			expect:         github.CheckStatusPass,
+		},
+		{
+			name: "NonRequiredFails_RequiredPending",
+			contexts: []checkContextNode{
+				{TypeName: "CheckRun", Name: "required-ci", Status: "IN_PROGRESS"},
+				{TypeName: "CheckRun", Name: "optional-lint", Status: "COMPLETED", Conclusion: strPtr("FAILURE")},
+			},
+			requiredChecks: map[string]bool{"required-ci": true},
+			expect:         github.CheckStatusPending,
 		},
 		{
 			name: "MixedTypes_NonRequiredFails_RequiredPasses",
@@ -679,7 +702,7 @@ func TestComputeRequiredCheckStatus(t *testing.T) {
 				{TypeName: "StatusContext", Context: "optional/coverage", State: "FAILURE"},
 			},
 			requiredChecks: map[string]bool{"required-ci": true, "ci/build": true},
-			expect:         github.CheckStatusPass,
+			expect:         github.CheckStatusWarning,
 		},
 		{
 			name: "MixedTypes_RequiredFails",
@@ -742,7 +765,7 @@ func TestComputeRequiredCheckStatus(t *testing.T) {
 				{TypeName: "CheckRun", Name: "optional", Status: "COMPLETED", Conclusion: strPtr("FAILURE")},
 			},
 			requiredChecks: map[string]bool{"ci/semaphoreci/pr: test": true},
-			expect:         github.CheckStatusPass,
+			expect:         github.CheckStatusWarning,
 		},
 	}
 
@@ -750,6 +773,97 @@ func TestComputeRequiredCheckStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			actual := computeRequiredCheckStatus(tc.contexts, tc.requiredChecks)
 			require.Equal(t, tc.expect, actual)
+		})
+	}
+}
+
+func TestFetchRequiredChecksStatus(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	contexts := func(nodes ...checkContextNode) map[string]any {
+		return map[string]any{"commits": map[string]any{"nodes": []any{
+			map[string]any{"commit": map[string]any{"statusCheckRollup": map[string]any{
+				"contexts": map[string]any{"nodes": nodes},
+			}}},
+		}}}
+	}
+	passed := func(name string) checkContextNode {
+		return checkContextNode{TypeName: "CheckRun", Name: name, Status: "COMPLETED", Conclusion: strPtr("SUCCESS")}
+	}
+	failed := func(name string) checkContextNode {
+		return checkContextNode{TypeName: "CheckRun", Name: name, Status: "COMPLETED", Conclusion: strPtr("FAILURE")}
+	}
+	target := func(required ...string) map[string]any {
+		return map[string]any{"ref": map[string]any{"refUpdateRule": map[string]any{
+			"requiredStatusCheckContexts": required,
+		}}}
+	}
+	prs := []*github.PullRequest{{ID: "PR_1", Number: 1}, {ID: "PR_2", Number: 2}}
+	data := func(target any) map[string]any {
+		return map[string]any{
+			"target": target,
+			"pr_1":   contexts(passed("build"), failed("lint")),
+			"pr_2":   contexts(failed("build"), passed("lint")),
+		}
+	}
+
+	tests := []struct {
+		name            string
+		configured      []string
+		data            map[string]any
+		expectTargetRef bool
+		expect          map[int]github.CheckStatus
+	}{
+		{
+			name:            "RequiredFromTargetBranch",
+			data:            data(target("build")),
+			expectTargetRef: true,
+			expect:          map[int]github.CheckStatus{1: github.CheckStatusWarning, 2: github.CheckStatusFail},
+		},
+		{
+			name:            "ConfiguredOverridesTargetBranch",
+			configured:      []string{"lint"},
+			data:            data(nil),
+			expectTargetRef: false,
+			expect:          map[int]github.CheckStatus{1: github.CheckStatusFail, 2: github.CheckStatusWarning},
+		},
+		{
+			name:            "NoProtection",
+			data:            data(map[string]any{"ref": map[string]any{"refUpdateRule": nil}}),
+			expectTargetRef: true,
+			expect:          nil,
+		},
+		{
+			name:            "UnknownTargetBranch",
+			data:            data(map[string]any{"ref": nil}),
+			expectTargetRef: true,
+			expect:          nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var query string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req graphqlRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				query = req.Query
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": tc.data}))
+			}))
+			defer server.Close()
+
+			c := &client{
+				config: &config.Config{Repo: &config.RepoConfig{
+					GitHubRepoOwner: "owner",
+					GitHubRepoName:  "repo",
+					GitHubBranch:    "main",
+					RequiredChecks:  tc.configured,
+				}, User: &config.UserConfig{}},
+				graphqlEndpoint: server.URL,
+				httpClient:      server.Client(),
+			}
+
+			actual := c.fetchRequiredChecksStatus(context.Background(), prs)
+			require.Equal(t, tc.expect, actual)
+			require.Equal(t, tc.expectTargetRef, strings.Contains(query, `ref(qualifiedName: "refs/heads/main")`))
 		})
 	}
 }

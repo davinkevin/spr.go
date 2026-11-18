@@ -45,6 +45,7 @@ func TestMergable(t *testing.T) {
 		{pr(CheckStatusPending, false, true, true), cfg(true, false), false},
 		{pr(CheckStatusFail, false, true, true), cfg(true, false), false},
 		{pr(CheckStatusPass, false, true, true), cfg(true, false), true},
+		{pr(CheckStatusWarning, false, true, true), cfg(true, false), true},
 		{pr(CheckStatusPass, false, true, true), cfg(true, true), false},
 		{pr(CheckStatusPass, true, true, true), cfg(true, true), true},
 	}
@@ -86,6 +87,8 @@ func TestReady(t *testing.T) {
 	tests := []testcase{
 		{pr(CheckStatusUnknown, false, false, true, false), cfg(false, false), true},
 		{pr(CheckStatusPass, false, true, true, false), cfg(true, false), true},
+		{pr(CheckStatusWarning, false, true, true, false), cfg(true, false), true},
+		{pr(CheckStatusPending, false, true, true, false), cfg(true, false), false},
 		{pr(CheckStatusPass, false, true, false, false), cfg(true, true), false},
 		{pr(CheckStatusFail, false, false, false, false), cfg(true, true), false},
 		{pr(CheckStatusPass, true, false, false, false), cfg(true, true), false},
@@ -133,6 +136,7 @@ func TestStatusString(t *testing.T) {
 		{pr(CheckStatusFail, true, true, true), cfg(true, true), "[xvvv]"},
 		{pr(CheckStatusUnknown, true, true, true), cfg(true, true), "[?vvv]"},
 		{pr(CheckStatusPending, true, true, true), cfg(true, true), "[.vvv]"},
+		{pr(CheckStatusWarning, true, true, true), cfg(true, true), "[!vvv]"},
 		{pr(CheckStatusPass, false, true, true), cfg(true, true), "[vxvv]"},
 		{pr(CheckStatusPass, true, false, true), cfg(true, true), "[vvxv]"},
 		{pr(CheckStatusPass, true, true, false), cfg(true, true), "[vvvx]"},

@@ -218,11 +218,13 @@ func (c *client) GetInfo(ctx context.Context, gitcmd git.GitInterface) *github.G
 
 	pullRequests := matchPullRequestStack(c.config.Repo, c.config.BranchPrefix(), targetBranch, localCommitStack, pullRequestConnection)
 
-	// When RequiredChecks is explicitly configured, fetch individual check contexts
-	// and only evaluate the listed checks. This allows non-required check failures
-	// to be ignored. When RequiredChecks is not set, the statusCheckRollup.state
+	// Fetch individual check contexts and only evaluate the required checks:
+	// the ones listed in RequiredChecks, or, when not configured, the ones
+	// required by the protection rules of the target branch. A failing
+	// non-required check downgrades the status to a warning instead of a
+	// failure. When no required checks are known, the statusCheckRollup.state
 	// from the fezzik query is used as-is (all checks matter).
-	if c.config.Repo.RequireChecks && len(c.config.Repo.RequiredChecks) > 0 && len(pullRequests) > 0 {
+	if c.config.Repo.RequireChecks && len(pullRequests) > 0 {
 		requiredStatus := c.fetchRequiredChecksStatus(ctx, pullRequests)
 		if requiredStatus != nil {
 			for _, pr := range pullRequests {
@@ -700,6 +702,37 @@ type checkContextsResult struct {
 	} `json:"commits"`
 }
 
+type targetRefResult struct {
+	Ref *struct {
+		RefUpdateRule *struct {
+			RequiredStatusCheckContexts []*string `json:"requiredStatusCheckContexts"`
+		} `json:"refUpdateRule"`
+	} `json:"ref"`
+}
+
+// requiredChecksFromTargetRef extracts the names of the status checks required
+// by the protection rules of the target branch.
+func requiredChecksFromTargetRef(raw json.RawMessage) []string {
+	if raw == nil {
+		return nil
+	}
+	var target targetRefResult
+	if err := json.Unmarshal(raw, &target); err != nil {
+		log.Warn().Err(err).Msg("failed to unmarshal target branch protection rules")
+		return nil
+	}
+	if target.Ref == nil || target.Ref.RefUpdateRule == nil {
+		return nil
+	}
+	var required []string
+	for _, name := range target.Ref.RefUpdateRule.RequiredStatusCheckContexts {
+		if name != nil && *name != "" {
+			required = append(required, *name)
+		}
+	}
+	return required
+}
+
 type graphqlRequest struct {
 	Query string `json:"query"`
 }
@@ -713,8 +746,14 @@ type graphqlResponse struct {
 
 // fetchRequiredChecksStatus makes a single batched GraphQL query to fetch
 // individual check contexts for all given pull requests. It evaluates only
-// the checks listed in config.Repo.RequiredChecks and returns a map from
-// PR number to the computed status.
+// the required checks and returns a map from PR number to the computed status.
+//
+// The required checks are the ones listed in config.Repo.RequiredChecks or,
+// when not configured, the ones required by the protection rules of the target
+// branch (config.Repo.GitHubBranch). The target branch is used rather than the
+// base branch of each pull request because stacked pull requests are based on
+// unprotected spr branches, while they all end up being merged into the target
+// branch. It returns nil when no required checks are known.
 func (c *client) fetchRequiredChecksStatus(ctx context.Context, pullRequests []*github.PullRequest) map[int]github.CheckStatus {
 	if len(pullRequests) == 0 {
 		return nil
@@ -727,6 +766,16 @@ func (c *client) fetchRequiredChecksStatus(ctx context.Context, pullRequests []*
 	// Build a single GraphQL query with one aliased field per PR.
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString("query {")
+	if len(c.config.Repo.RequiredChecks) == 0 {
+		fmt.Fprintf(&queryBuilder, `
+  target: repository(owner: %q, name: %q) {
+    ref(qualifiedName: %q) {
+      refUpdateRule {
+        requiredStatusCheckContexts
+      }
+    }
+  }`, c.config.Repo.GitHubRepoOwner, c.config.Repo.GitHubRepoName, "refs/heads/"+c.config.Repo.GitHubBranch)
+	}
 	for _, pr := range pullRequests {
 		fmt.Fprintf(&queryBuilder, `
   pr_%d: node(id: %q) {
@@ -793,8 +842,16 @@ func (c *client) fetchRequiredChecksStatus(ctx context.Context, pullRequests []*
 	}
 
 	// Build the set of required check names from config.
-	requiredSet := make(map[string]bool, len(c.config.Repo.RequiredChecks))
-	for _, name := range c.config.Repo.RequiredChecks {
+	requiredChecks := c.config.Repo.RequiredChecks
+	if len(requiredChecks) == 0 {
+		requiredChecks = requiredChecksFromTargetRef(gqlResp.Data["target"])
+	}
+	if len(requiredChecks) == 0 {
+		// no required checks known: every check matters, keep the rollup state
+		return nil
+	}
+	requiredSet := make(map[string]bool, len(requiredChecks))
+	for _, name := range requiredChecks {
 		requiredSet[name] = true
 	}
 
@@ -837,47 +894,31 @@ func contextName(ctx checkContextNode) string {
 // computeRequiredCheckStatus determines the aggregate check status considering
 // only the checks whose name/context appears in requiredChecks.
 // If a required check hasn't reported yet (not present in contexts), it is
-// treated as pending.
+// treated as pending. When all required checks pass but a non-required check
+// has failed, the status is a warning, which does not block the merge.
 func computeRequiredCheckStatus(contexts []checkContextNode, requiredChecks map[string]bool) github.CheckStatus {
 	// Track which required checks we've seen
 	seen := make(map[string]bool, len(requiredChecks))
 	hasPending := false
 	hasFail := false
+	hasOptionalFail := false
 
 	for _, ctx := range contexts {
 		name := contextName(ctx)
+		result := contextResult(ctx)
 		if !requiredChecks[name] {
+			if result == github.CheckStatusFail {
+				hasOptionalFail = true
+			}
 			continue
 		}
 		seen[name] = true
 
-		switch ctx.TypeName {
-		case "CheckRun":
-			switch ctx.Status {
-			case "COMPLETED":
-				if ctx.Conclusion == nil {
-					hasFail = true
-				} else {
-					switch *ctx.Conclusion {
-					case "SUCCESS", "NEUTRAL", "SKIPPED":
-						// pass
-					default:
-						hasFail = true
-					}
-				}
-			default:
-				// IN_PROGRESS, QUEUED, REQUESTED, WAITING, PENDING
-				hasPending = true
-			}
-		case "StatusContext":
-			switch ctx.State {
-			case "SUCCESS":
-				// pass
-			case "PENDING", "EXPECTED":
-				hasPending = true
-			default:
-				hasFail = true
-			}
+		switch result {
+		case github.CheckStatusFail:
+			hasFail = true
+		case github.CheckStatusPending:
+			hasPending = true
 		}
 	}
 
@@ -893,6 +934,39 @@ func computeRequiredCheckStatus(contexts []checkContextNode, requiredChecks map[
 	}
 	if hasPending {
 		return github.CheckStatusPending
+	}
+	if hasOptionalFail {
+		return github.CheckStatusWarning
+	}
+	return github.CheckStatusPass
+}
+
+// contextResult returns the result of a single check context: pass, pending or fail.
+func contextResult(ctx checkContextNode) github.CheckStatus {
+	switch ctx.TypeName {
+	case "CheckRun":
+		if ctx.Status != "COMPLETED" {
+			// IN_PROGRESS, QUEUED, REQUESTED, WAITING, PENDING
+			return github.CheckStatusPending
+		}
+		if ctx.Conclusion == nil {
+			return github.CheckStatusFail
+		}
+		switch *ctx.Conclusion {
+		case "SUCCESS", "NEUTRAL", "SKIPPED":
+			return github.CheckStatusPass
+		default:
+			return github.CheckStatusFail
+		}
+	case "StatusContext":
+		switch ctx.State {
+		case "SUCCESS":
+			return github.CheckStatusPass
+		case "PENDING", "EXPECTED":
+			return github.CheckStatusPending
+		default:
+			return github.CheckStatusFail
+		}
 	}
 	return github.CheckStatusPass
 }

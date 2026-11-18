@@ -185,14 +185,16 @@ Each PR shows four status bits:
  └────────── checks: CI checks pass
 ```
 
-| Bit | ⌛ | ❌ | ✅ | ➖ |
-|-----|---|---|---|---|
-| Checks   | pending | failed       | pass       | not required |
-| Approval | --      | not approved | approved   | not required |
-| Conflicts| --      | has conflicts| no conflicts| --          |
-| Stack    | --      | blocked below| all clear  | --           |
+| Bit | ⌛ | ❌ | ⚠️ | ✅ | ➖ |
+|-----|---|---|---|---|---|
+| Checks   | pending | failed       | optional checks failed | pass       | not required |
+| Approval | --      | not approved | --                     | approved   | not required |
+| Conflicts| --      | has conflicts| --                     | no conflicts| --          |
+| Stack    | --      | blocked below| --                     | all clear  | --           |
 
-Configure check and approval requirements with `requireChecks`, `requiredChecks`, and `requireApproval` in `.spr.yml`. When `requiredChecks` lists specific check names, only those checks are evaluated -- all others are ignored. This is useful when optional checks (e.g. linters, deploy previews) would otherwise cause the status to show as failed.
+Configure check and approval requirements with `requireChecks`, `requiredChecks`, and `requireApproval` in `.spr.yml`.
+
+Only required checks decide whether a PR can be merged. The required checks are the ones listed in `requiredChecks` or, when it is not set, the ones required by the branch protection of the target branch (`githubBranch`) on GitHub. When all required checks pass but an optional check (e.g. linters, deploy previews) failed, the checks bit shows ⚠️ and the PR can still be merged. When no required checks are known, every check is taken into account.
 
 ### Starting a new stack
 
@@ -212,7 +214,7 @@ Configuration is created automatically on first run. Repository config lives in 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `requireChecks` | bool | `true` | Require checks to pass in order to merge |
-| `requiredChecks` | list | | List of check names that must pass. When set, only these checks are evaluated; all others are ignored |
+| `requiredChecks` | list | | List of check names that must pass. When not set, the required checks of the target branch protection are used. Failures of other checks only show a warning |
 | `requireApproval` | bool | `true` | Require PR approval in order to merge |
 | `githubRepoOwner` | str | | GitHub owner (auto-detected from git remote) |
 | `githubRepoName` | str | | GitHub repository name (auto-detected from git remote) |

@@ -40,9 +40,17 @@ const (
 	// CheckStatusPass when all checks pass
 	CheckStatusPass
 
-	// CheckStatusFail when some chechs have failed
+	// CheckStatusFail when some required checks have failed
 	CheckStatusFail
+
+	// CheckStatusWarning when all required checks pass but some optional checks have failed
+	CheckStatusWarning
 )
+
+// passing returns true when the checks don't prevent the pull request from merging
+func (cs CheckStatus) passing() bool {
+	return cs == CheckStatusPass || cs == CheckStatusWarning
+}
 
 // PullRequestMergeStatus is the merge status of a pull request
 type PullRequestMergeStatus struct {
@@ -67,7 +75,7 @@ func (pr *PullRequest) Mergeable(config *config.Config) bool {
 	if !pr.MergeStatus.Stacked {
 		return false
 	}
-	if config.Repo.RequireChecks && pr.MergeStatus.ChecksPass != CheckStatusPass {
+	if config.Repo.RequireChecks && !pr.MergeStatus.ChecksPass.passing() {
 		return false
 	}
 	if config.Repo.RequireApproval && !pr.MergeStatus.ReviewApproved {
@@ -84,7 +92,7 @@ func (pr *PullRequest) Ready(config *config.Config) bool {
 	if !pr.MergeStatus.NoConflicts {
 		return false
 	}
-	if config.Repo.RequireChecks && pr.MergeStatus.ChecksPass != CheckStatusPass {
+	if config.Repo.RequireChecks && !pr.MergeStatus.ChecksPass.passing() {
 		return false
 	}
 	if config.Repo.RequireApproval && !pr.MergeStatus.ReviewApproved {
@@ -258,6 +266,8 @@ func (cs CheckStatus) String(config *config.Config) string {
 			return icons["crossmark"]
 		case CheckStatusPass:
 			return icons["checkmark"]
+		case CheckStatusWarning:
+			return icons["warning"]
 		default:
 			return icons["questionmark"]
 		}
